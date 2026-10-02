@@ -97,7 +97,39 @@ drop policy if exists valve_audit_read on public.audit_events;
 create policy valve_audit_read on public.audit_events for select to authenticated
 using (valve_private.app_role() = 'admin');
 
--- Private, versioned SQLite files; old versions remain available for recovery.
+-- Only replaced snapshots are eligible for deletion; uploads in progress are not.
+create table if not exists valve_private.retired_databases (
+  storage_path text primary key,
+  source_type text not null
+);
+revoke all on valve_private.retired_databases from public, anon, authenticated;
+
+create or replace function valve_private.can_delete_database(p_path text)
+returns boolean language plpgsql volatile security definer set search_path = '' as $$
+declare kind text := split_part(p_path,'/',1);
+begin
+  if coalesce(valve_private.app_role(),'') not in ('admin','uploader')
+     or kind not in ('hardware_configurator','manufacturing_log') then return false; end if;
+  -- Serialize activation and deletion, including reactivation of an old hash.
+  perform pg_advisory_xact_lock(hashtextextended('valve-database:' || kind,0));
+  return exists (select 1 from valve_private.retired_databases where storage_path = p_path)
+    and not exists (select 1 from public.database_sources where storage_path = p_path);
+end;
+$$;
+revoke all on function valve_private.can_delete_database(text) from public, anon;
+grant execute on function valve_private.can_delete_database(text) to authenticated;
+
+create or replace function public.retired_database_paths(p_type text)
+returns table(storage_path text) language sql security definer set search_path = '' as $$
+  select r.storage_path from valve_private.retired_databases r
+  join storage.objects o on o.bucket_id = 'valve-databases' and o.name = r.storage_path
+  where r.source_type = p_type and valve_private.app_role() in ('admin','uploader')
+    and not exists (select 1 from public.database_sources d where d.storage_path = r.storage_path);
+$$;
+revoke all on function public.retired_database_paths(text) from public, anon;
+grant execute on function public.retired_database_paths(text) to authenticated;
+
+-- Private, hash-named SQLite files.
 insert into storage.buckets (id,name,public,file_size_limit,allowed_mime_types)
 values ('valve-databases','valve-databases',false,52428800,array['application/octet-stream'])
 on conflict (id) do update set public = false,
@@ -113,7 +145,10 @@ create policy valve_files_insert on storage.objects for insert to authenticated
 with check (bucket_id = 'valve-databases'
   and valve_private.app_role() in ('admin','uploader')
   and name ~ '^(hardware_configurator|manufacturing_log)/[a-f0-9]{64}[.]db$');
--- No UPDATE or DELETE policy: clients cannot overwrite/delete database versions.
+-- No UPDATE policy. DELETE only permits retired, non-active snapshots.
+drop policy if exists valve_files_delete on storage.objects;
+create policy valve_files_delete on storage.objects for delete to authenticated
+using (bucket_id = 'valve-databases' and valve_private.can_delete_database(name));
 
 create or replace function public.save_settings(p_value jsonb,p_revision bigint)
 returns bigint language plpgsql security definer set search_path = '' as $$
@@ -147,7 +182,7 @@ create or replace function public.activate_database(
   p_type text,p_path text,p_sha text,p_name text,p_size bigint,p_report jsonb
 )
 returns void language plpgsql security definer set search_path = '' as $$
-declare object_size bigint;
+declare object_size bigint; previous_path text;
 begin
   if coalesce(valve_private.app_role(),'') not in ('admin','uploader') then
     raise exception 'Uploader access required' using errcode = '42501';
@@ -161,11 +196,18 @@ begin
     or pg_column_size(p_report) > 262144 then
     raise exception 'Invalid database metadata';
   end if;
+  perform pg_advisory_xact_lock(hashtextextended('valve-database:' || p_type,0));
+  select storage_path into previous_path from public.database_sources where source_type = p_type;
   select (metadata ->> 'size')::bigint into object_size
     from storage.objects where bucket_id = 'valve-databases' and name = p_path;
   if object_size is distinct from p_size then
     raise exception 'Upload missing or file size does not match';
   end if;
+  if previous_path is not null and previous_path <> p_path then
+    insert into valve_private.retired_databases values (previous_path,p_type)
+      on conflict (storage_path) do nothing;
+  end if;
+  delete from valve_private.retired_databases where storage_path = p_path;
   -- SQLite integrity/schema and SHA must also be checked by the uploader/viewer.
   -- The report is client-supplied, not server-verified SQLite validation.
   insert into public.database_sources (

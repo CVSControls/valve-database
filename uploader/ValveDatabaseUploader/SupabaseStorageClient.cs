@@ -83,6 +83,18 @@ public sealed class SupabaseStorageClient : IDisposable
                 details = new { desktopValidation = true } }
         }, token);
         await EnsureSuccessAsync(activate, token);
+        // Never delete the previous file until the replacement is active.
+        using var retired = await _http.PostAsJsonAsync("rest/v1/rpc/retired_database_paths", new { p_type = type }, token);
+        await EnsureSuccessAsync(retired, token);
+        using var paths = JsonDocument.Parse(await retired.Content.ReadAsStringAsync(token));
+        var prefixes = paths.RootElement.EnumerateArray().Select(row => row.GetProperty("storage_path").GetString()!).ToArray();
+        foreach (var batch in prefixes.Chunk(100))
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, "storage/v1/object/valve-databases")
+            { Content = JsonContent.Create(new { prefixes = batch }) };
+            using var deleted = await _http.SendAsync(request, token);
+            await EnsureSuccessAsync(deleted, token);
+        }
     }
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken token)
     {

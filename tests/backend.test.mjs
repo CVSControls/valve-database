@@ -41,8 +41,10 @@ globalThis.__testSupabase={
  storage:{from:()=>({
   download:async key=>{state.downloads++;return state.files.has(key)?{data:new Blob([state.files.get(key)])}:{error:new Error('Missing private file')}},
   upload:async(key,blob)=>{if(state.files.has(key))return{error:new Error('already exists')};state.files.set(key,new Uint8Array(await blob.arrayBuffer()));return{}},
+  remove:async keys=>{for(const key of keys){assert.ok(!state.sources.some(s=>s.storage_path===key));state.files.delete(key)}return{}},
  })},
  async rpc(name,args){
+  if(name==='retired_database_paths')return{data:[...state.files.keys()].filter(key=>key.startsWith(args.p_type+'/')&&!state.sources.some(s=>s.storage_path===key)).map(storage_path=>({storage_path}))};
   if(name==='save_settings'){
    if(state.failSave||args.p_revision!==state.settings.revision)return{error:new Error('Settings changed. Reload before saving.')};
    state.settings.value=args.p_value;return{data:++state.settings.revision};

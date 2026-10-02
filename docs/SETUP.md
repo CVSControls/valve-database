@@ -69,6 +69,6 @@ The first admin visit seeds an empty settings row with sanitized previous displa
 - Disable automatic GitHub sync in the old uploader when switching to the new one.
 - Approved viewers download complete SQLite snapshots into browser memory and can save/copy data they are allowed to view. Private storage does not prevent authorized users copying data.
 - The app closes databases on logout and no longer stores them in IndexedDB.
-- Snapshots are immutable/hash-named, limited to 50 MiB. Old versions remain in Storage for recovery and count toward quotas; retention cleanup is separate.
+- Snapshots are immutable/hash-named, limited to 50 MiB. After successful activation, website uploads and the updated Windows uploader delete replaced snapshots through the Storage API. Active files and pending uploads are protected. Failed cleanup is retried on the next upload. Run the updated `supabase/setup.sql` in the SQL Editor on existing installations to enable cleanup; this does not reset accounts or settings. Deleted snapshots cannot be recovered from this bucket: retain your local database backups.
 - Clients validate SQLite integrity/schema and checksums. Postgres enforces role, object existence, path, size, and metadata activation; it does not itself parse SQLite or verify the client-supplied validation report.
 - Old database copies and hashes remain in the old public GitHub history. Removing that history is a separate destructive operation and has not been done.

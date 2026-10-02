@@ -37,6 +37,13 @@ export async function uploadDatabase(type:string,bytes:Uint8Array,name:string,re
  const{error:uploadError}=await supabase.storage.from(bucket).upload(storagePath,new Blob([new Uint8Array(bytes).buffer],{type:'application/octet-stream'}),{upsert:false});
  if(uploadError&&!/already exists|duplicate/i.test(uploadError.message))throw uploadError;
  const {error}=await supabase.rpc('activate_database',{p_type:type,p_path:storagePath,p_sha:sha,p_name:name,p_size:bytes.byteLength,p_report:report});if(error)throw error;
+ // Activation must succeed first. Keep failed cleanup queued for the next upload.
+ const {data:retired,error:listError}=await supabase.rpc('retired_database_paths',{p_type:type});
+ if(listError)throw new Error(`Database is active, but old-file cleanup failed: ${listError.message}`);
+ for(let i=0;i<(retired?.length||0);i+=100){
+  const {error:deleteError}=await supabase.storage.from(bucket).remove(retired!.slice(i,i+100).map((row:any)=>row.storage_path));
+  if(deleteError)throw new Error(`Database is active, but old-file cleanup failed: ${deleteError.message}`);
+ }
  return sha;
 }
 supabase.auth.onAuthStateChange(event=>{if(event==='SIGNED_OUT')profile=null});
