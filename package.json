@@ -1,0 +1,18 @@
+{
+  "name": "valve-database-viewer",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "test": "node tests/backend.test.mjs && node tests/accounts.test.mjs",
+    "start": "npm run preview -w client"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "sql.js": "^1.14.2"
+  }
+}

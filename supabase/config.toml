@@ -1,0 +1,3 @@
+[functions.manage-users]
+# Authentication is verified inside the handler using Supabase Auth.
+verify_jwt = false

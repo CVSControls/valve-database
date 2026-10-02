@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ValveDatabaseUploader/ValveDatabaseUploader.csproj" />
+  <Project Path="ValveDatabaseUploader.Tests/ValveDatabaseUploader.Tests.csproj" />
+</Solution>
