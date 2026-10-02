@@ -4,11 +4,11 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {build} from 'esbuild';
-let handler,role='admin',active=true,created=0,lastProfile=null,lastAudit=null;
+let handler,role='admin',active=true,created=0,lastProfile=null,lastAudit=null,targetRole='admin',targetActive=true,deleted=[],deleteError=null;
 globalThis.__accountsAdmin={
  auth:{getUser:async token=>({data:{user:token==='valid-jwt'?{id:'caller'}:null}}),
-  admin:{createUser:async()=>{created++;return{data:{user:{id:'new-user'}}}},deleteUser:async()=>({}),updateUserById:async()=>({})}},
- from(){return{select(){return this},eq(){return this},single:async()=>({data:{role,is_active:active,email:'admin@example.test'}}),
+  admin:{createUser:async()=>{created++;return{data:{user:{id:'new-user'}}}},deleteUser:async id=>{if(deleteError)return{error:{message:deleteError}};deleted.push(id);return{}},updateUserById:async()=>({})}},
+ from(){let id;return{select(){return this},eq(_key,value){id=value;return this},single:async()=>({data:{role:id==='caller'?role:targetRole,is_active:id==='caller'?active:targetActive,email:'admin@example.test'}}),
   update(value){lastProfile=value;return{eq:async()=>({})}},insert:async value=>{lastAudit=value;return{}}}},
 };
 globalThis.Deno={env:{get:key=>key==='SUPABASE_URL'?'https://example.supabase.co':'server-only-key'},serve:fn=>{handler=fn}};
@@ -33,4 +33,12 @@ test('admin-created accounts are approved without exposing passwords',async()=>{
 test('active admins cannot be disabled/demoted from website controls',async()=>{
  const response=await call({path:'/admin/users/00000000-0000-0000-0000-000000000001',method:'PUT',role:'user',is_active:false});
  assert.equal(response.status,400);assert.match((await response.json()).error,/cannot be disabled or demoted/);
+});
+test('deletion requires admin access, protects active admins, and audits success',async()=>{
+ const id='00000000-0000-0000-0000-000000000002',request={path:'/admin/users/'+id,method:'DELETE'};
+ role='user';assert.equal((await call(request)).status,403);role='admin';
+ assert.equal((await call(request)).status,400);assert.equal(deleted.length,0);
+ targetRole='user';assert.equal((await call(request)).status,200);
+ assert.deepEqual(deleted,[id]);assert.equal(lastAudit.action,'user.delete');assert.equal(lastAudit.details.id,id);
+ deleteError='Account deletion rejected';assert.equal((await call(request)).status,400);assert.equal(deleted.length,1);deleteError=null;
 });

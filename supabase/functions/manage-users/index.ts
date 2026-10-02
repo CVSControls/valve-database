@@ -36,8 +36,18 @@ Deno.serve(async request=>{
   const match=path.match(/^\/admin\/users\/([a-f0-9-]{36})(\/reset-password)?$/i);
   if(!match)return reply({error:'Unknown account operation'},404);
   const id=match[1];
+  if(!match[2]&&method==='DELETE'&&id===user.id)
+   return reply({error:'You cannot delete your own account.'},400);
   const{data:target,error:targetError}=await admin.from('profiles').select('role,is_active').eq('id',id).single();
   if(targetError||!target)return reply({error:'Account not found'},404);
+  if(!match[2]&&method==='DELETE'){
+   if(target.role==='admin'&&target.is_active)
+    return reply({error:'Active administrators cannot be deleted here. Use the Supabase dashboard.'},400);
+   // Auth deletion also removes the profile through its foreign-key cascade.
+   const{error}=await admin.auth.admin.deleteUser(id);
+   if(error)return reply({error:error.message},400);
+   await audit('user.delete',id);return reply({ok:true});
+  }
   if(match[2]&&method==='POST'){
    const{error}=await admin.auth.admin.updateUserById(id,{password:password()});if(error)return reply({error:error.message},400);
    await audit('user.password_reset',id);return reply({ok:true});
